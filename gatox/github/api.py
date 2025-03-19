@@ -11,7 +11,6 @@ from gatox.cli.output import Output
 from datetime import datetime, timezone, timedelta
 from gatox.enumerate.ingest.ingest import DataIngestor
 from gatox.models.workflow import Workflow
-from gatox.models.repository import Repository
 from gatox.github.gql_queries import GqlQueries
 
 logger = logging.getLogger(__name__)
@@ -521,16 +520,27 @@ class Api:
             list(str): List of strings containing the organization names that
             the user is a member of.
         """
+        organizations = []
+        page = 1
+        per_page = 100
 
-        result = self.call_get("/user/orgs")
+        while True:
+            params = {"page": page, "per_page": per_page}
+            result = self.call_get("/user/orgs", params=params)
 
-        if result.status_code == 200:
+            if result.status_code == 200:
+                orgs = result.json()
+                if not orgs:
+                    break
 
-            organizations = result.json()
+                organizations.extend([org["login"] for org in orgs])
+                page += 1
+            elif result.status_code == 403:
+                break
+            else:
+                break
 
-            return [org["login"] for org in organizations]
-        elif result.status_code == 403:
-            return []
+        return organizations
 
     def get_repository(self, repository: str):
         """Retrieve a repository using the GitHub API.
@@ -863,14 +873,11 @@ class Api:
 
         return []
 
-    def retrieve_run_logs(
-        self, repo_name: str, short_circuit: str = True, workflows: list = []
-    ):
+    def retrieve_run_logs(self, repo_name: str, workflows: list = []):
         """Retrieve the most recent run log associated with a repository.
 
         Args:
             repo_name (str): Full name of the repository.
-            short_circuit (bool, optional): Whether to return as soon as the
             first instance of a non-ephemeral self-hosted runner is detected.
             Defaults to True.
             workflows (list, optional): List of workflows to check for. Defaults
@@ -886,7 +893,7 @@ class Api:
             run_result = self.call_get(
                 f"/repos/{repo_name}/actions/workflows/{workflow}/runs",
                 params={
-                    "per_page": "25",
+                    "per_page": "3",
                     "status": "completed",
                     "exclude_pull_requests": "true",
                     "created": f">{start_date.isoformat()}",
@@ -895,27 +902,24 @@ class Api:
 
             if run_result.status_code == 200:
                 runs.extend(run_result.json()["workflow_runs"])
-        if not runs:
-            bulk_result = self.call_get(
-                f"/repos/{repo_name}/actions/runs",
-                params={
-                    "per_page": "50",
-                    "status": "completed",
-                    "exclude_pull_requests": "true",
-                    "created": f">{start_date.isoformat()}",
-                },
-            )
-            if bulk_result.status_code == 200:
-                runs.extend(bulk_result.json()["workflow_runs"])
 
         # This is a dictionary so we can de-duplicate runner IDs based on
         # the machine_name:runner_name.
         run_logs = {}
         names = set()
+        total_attempts = 0
 
         if runs:
             logger.debug(f"Enumerating runs within {repo_name}")
         for run in runs:
+            # We only look at 10 workflow logs.
+            # If we haven't found a non-ephemeral runner it is unlikely we will.
+            # Larger repos with complex matrix builds and reusable workflows
+            # can have massive log sizes and we end up wasting a lot of time.
+            if total_attempts > 10:
+
+                break
+
             # We are only interested in runs that actually executed.
             if run["conclusion"] != "success" and run["conclusion"] != "failure":
                 continue
@@ -925,25 +929,24 @@ class Api:
             if workflow_key in names:
                 continue
             names.add(workflow_key)
-
             run_log = self.call_get(
                 f'/repos/{repo_name}/actions/runs/{run["id"]}/'
                 f'attempts/{run["run_attempt"]}/logs'
             )
+
             if run_log.status_code == 200:
                 try:
-
                     run_log = self.__process_run_log(run_log.content, run)
                     if run_log:
                         key = f"{run_log['machine_name']}:{run_log['runner_name']}"
                         run_logs[key] = run_log
 
-                        if short_circuit and run_log["non_ephemeral"]:
+                        if run_log["non_ephemeral"]:
                             return run_logs.values()
                 except Exception as e:
-                    logger.warn(
+                    logger.warning(
                         f"Failed to process run log for {repo_name} run "
-                        "{run['id']} attempt {run['run_attempt']}!"
+                        f"{run['id']} attempt {run['run_attempt']}!"
                     )
             elif run_log.status_code == 410:
                 break
@@ -953,6 +956,8 @@ class Api:
                     f"{run['id']} attempt {run['run_attempt']} returned "
                     f"{run_log.status_code}!"
                 )
+
+            total_attempts += 1
 
         return run_logs.values()
 
@@ -1721,15 +1726,19 @@ class Api:
 
     def retrieve_raw_action(self, repo: str, file_path: str, ref: str):
         """Retrieves a GitHub action yaml file from a public repository."""
-
         if file_path.endswith(".yml") or file_path.endswith(".yaml"):
+            file_path = file_path.replace("//", "/")
             paths = [file_path]
         else:
+            if not file_path.endswith("/"):
+                file_path += "/"
+            elif file_path.endswith("//"):
+                file_path = file_path.replace("//", "/")
             paths = [f"{file_path}action.yml", f"{file_path}action.yaml"]
 
         for path in paths:
-
             res = self.__get_raw_file(repo, path, ref)
+
             if res:
                 return res
 

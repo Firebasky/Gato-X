@@ -1,12 +1,16 @@
 import argparse
 import os
+from pathlib import Path
 import re
+import logging
 
 from colorama import Fore, Style
 
 from gatox import util
+from gatox.caching.cache_manager import CacheManager
 from gatox.cli.colors import RED_DASH
 from gatox.cli.output import Output, SPLASH
+from gatox.caching.local_cache_manager import LocalCacheFactory
 from gatox.cli.enumeration.config import configure_parser_enumerate
 from gatox.cli.search.config import configure_parser_search
 from gatox.cli.attack.config import configure_parser_attack
@@ -82,7 +86,21 @@ def cli(args):
     arguments.func(arguments, subparsers)
 
 
+def save_workflow_ymls(output_directory):
+    for repo in CacheManager().get_repos():
+        Path(os.path.join(output_directory, f"{repo}")).mkdir(
+            parents=True, exist_ok=True
+        )
+        for workflow in CacheManager().get_workflows(repo):
+            with open(
+                os.path.join(output_directory, f"{repo}/{workflow.workflow_name}"), "w"
+            ) as wf_out:
+                wf_out.write(workflow.workflow_contents)
+
+
 def validate_arguments(args, parser):
+    logging.basicConfig(level=args.log_level)
+
     if "GH_TOKEN" not in os.environ:
         gh_token = input(
             "No 'GH_TOKEN' environment variable set! Please enter a GitHub" " PAT.\n"
@@ -299,14 +317,19 @@ def enumerate(args, parser):
         args.gh_token,
         socks_proxy=args.socks_proxy,
         http_proxy=args.http_proxy,
-        output_yaml=args.output_yaml,
         skip_log=args.skip_runners,
         github_url=args.api_url,
+        ignore_workflow_run=args.ignore_workflow_run,
+        deep_dive=args.deep_dive,
     )
 
     exec_wrapper = Execution()
     orgs = []
     repos = []
+
+    if args.cache_restore_file:
+        LocalCacheFactory.load_cache_from_file(args.cache_restore_file)
+        Output.info(f"Cache restored from file:{args.cache_restore_file}")
 
     if args.validate:
         orgs = gh_enumeration_runner.validate_only()
@@ -333,6 +356,9 @@ def enumerate(args, parser):
     elif args.repository:
         repos = gh_enumeration_runner.enumerate_repos([args.repository])
 
+    if args.output_yaml:
+        save_workflow_ymls(args.output_yaml)
+
     exec_wrapper.set_user_details(gh_enumeration_runner.user_perms)
     exec_wrapper.add_organizations(orgs)
     exec_wrapper.add_repositories(repos)
@@ -345,6 +371,10 @@ def enumerate(args, parser):
         Output.error(
             "Encountered an error writing the output JSON, this is likely a Gato-X bug."
         )
+
+    if args.cache_save_file:
+        LocalCacheFactory.dump_cache(args.cache_save_file)
+        Output.info(f"Cache saved to file:{args.cache_save_file}")
 
 
 def search(args, parser):
@@ -389,6 +419,13 @@ def configure_parser_general(parser):
     Args:
         parser: The parser to add the arguments to.
     """
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default="CRITICAL",
+        required=False,
+    )
+
     parser.add_argument(
         "--socks-proxy",
         "-sp",

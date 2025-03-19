@@ -1,13 +1,35 @@
+"""
+Copyright 2025, Adnan Khan
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+
 import time
 import random
 import threading
+import logging
+
+from requests.exceptions import RequestException
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import as_completed
 
 from gatox.caching.cache_manager import CacheManager
 from gatox.models.workflow import Workflow
 from gatox.models.repository import Repository
+from gatox.workflow_graph.graph_builder import WorkflowGraphBuilder
 from gatox.cli.output import Output
+
+logger = logging.getLogger(__name__)
 
 
 class DataIngestor:
@@ -113,8 +135,13 @@ class DataIngestor:
                 # to query.
                 while cls.__rl_lock.locked():
                     time.sleep(0.1)
+                try:
+                    result = api.call_post("/graphql", work_query)
+                except RequestException:
+                    logging.error("Request exception occurred, trying again.")
+                    time.sleep(15 + random.randint(0, 3))
+                    continue
 
-                result = api.call_post("/graphql", work_query)
                 # Sometimes we don't get a 200, fall back in this case.
                 if result.status_code == 200:
                     json_res = result.json()["data"]
@@ -138,7 +165,7 @@ class DataIngestor:
                 "Exception while running GraphQL query, will revert to REST "
                 "API workflow query for impacted repositories!"
             )
-            print(e)
+            logger.warning(f"{type(e)}: {str(e)}")
 
     @staticmethod
     def construct_workflow_cache(yml_results):
@@ -169,18 +196,12 @@ class DataIngestor:
             owner = result["nameWithOwner"]
             cache.set_empty(owner)
             # Empty means no YAMLs, so just skip.
-            if result["object"]:
-                for yml_node in result["object"]["entries"]:
-                    yml_name = yml_node["name"]
-                    if yml_node["type"] == "blob" and (
-                        yml_name.lower().endswith("yml")
-                        or yml_name.lower().endswith("yaml")
-                    ):
-                        if "text" in yml_node["object"]:
-                            contents = yml_node["object"]["text"]
-                            wf_wrapper = Workflow(owner, contents, yml_name)
 
-                            cache.set_workflow(owner, yml_name, wf_wrapper)
+            default_branch = (
+                result["defaultBranchRef"]["name"]
+                if result["defaultBranchRef"]
+                else "main"
+            )
 
             # If we are using app installation tokens, then
             # the query might return empty for this field, but if
@@ -229,3 +250,24 @@ class DataIngestor:
                 repo_data["environments"] = envs
             repo_wrapper = Repository(repo_data)
             cache.set_repository(repo_wrapper)
+
+            if result["object"]:
+                for yml_node in result["object"]["entries"]:
+                    yml_name = yml_node["name"]
+                    if yml_node["type"] == "blob" and (
+                        yml_name.lower().endswith("yml")
+                        or yml_name.lower().endswith("yaml")
+                    ):
+                        if "text" in yml_node["object"]:
+                            contents = yml_node["object"]["text"]
+                            wf_wrapper = Workflow(
+                                owner, contents, yml_name, default_branch=default_branch
+                            )
+
+                            if wf_wrapper.isInvalid():
+                                continue
+
+                            cache.set_workflow(owner, yml_name, wf_wrapper)
+                            WorkflowGraphBuilder().build_graph_from_yaml(
+                                wf_wrapper, repo_wrapper
+                            )
