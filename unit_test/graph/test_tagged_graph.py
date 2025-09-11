@@ -1,6 +1,7 @@
-import pytest
+from unittest.mock import AsyncMock, MagicMock
+
 import networkx as nx
-from unittest.mock import MagicMock, ANY
+
 from gatox.workflow_graph.graph.tagged_graph import TaggedGraph
 
 
@@ -98,7 +99,7 @@ def test_remove_tags_from_node():
     assert "tag2" in graph.get_tags_for_node(node)
 
 
-def test_dfs_to_tag():
+async def test_dfs_to_tag():
     builder = MagicMock()
     builder.initialize_node = MagicMock()
     graph = TaggedGraph(builder=builder)
@@ -112,6 +113,6 @@ def test_dfs_to_tag():
     graph.add_edge(nodeA, nodeB)
     graph.add_edge(nodeB, nodeC)
 
-    paths = graph.dfs_to_tag(nodeA, "target", api=MagicMock())
+    paths = await graph.dfs_to_tag(nodeA, "target", api=AsyncMock())
     assert len(paths) == 1
     assert paths[0] == [nodeA, nodeB, nodeC]

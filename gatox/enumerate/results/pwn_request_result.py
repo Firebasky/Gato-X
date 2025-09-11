@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from gatox.enumerate.results.confidence import Confidence
-from gatox.enumerate.results.complexity import Complexity
 from gatox.enumerate.results.analysis_result import AnalysisResult
+from gatox.enumerate.results.complexity import Complexity
+from gatox.enumerate.results.confidence import Confidence
 from gatox.enumerate.results.issue_type import IssueType
 
 
@@ -30,7 +30,6 @@ class PwnRequestResult(AnalysisResult):
     def __init__(
         self, path, confidence_score: Confidence, attack_complexity_score: Complexity
     ):
-
         repository_name = path[0].repo_name()
 
         super().__init__(
@@ -76,7 +75,7 @@ class PwnRequestResult(AnalysisResult):
             "confidence": self.confidence_score(),
             "attack_complexity": self.attack_complexity(),
             "explanation": self.attack_complexity().explain(),
-            "path": [step for step in self.collect_steps(self.__attack_path)],
+            "path": list(self.collect_steps(self.__attack_path)),
             "sink": (
                 self.__attack_path[-1].get_step_data()
                 if self.confidence_score() == Confidence.HIGH

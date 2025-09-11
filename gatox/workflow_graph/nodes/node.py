@@ -23,7 +23,10 @@ class Node:
         name (str): The name of the node.
     """
 
-    def __init__(self, name):
+    extra_tags: set[str]
+    line_number: int | None
+
+    def __init__(self, name, line_number=None):
         """
         Initialize a Node instance.
 
@@ -31,6 +34,8 @@ class Node:
             name (str): The name of the node.
         """
         self.name = name
+        self.extra_tags = set()
+        self.line_number = line_number
 
     def __repr__(self):
         """
@@ -39,7 +44,7 @@ class Node:
         Returns:
             str: A string representation of the Node instance.
         """
-        return f"{self.__class__.__name__}('{self.name}')"
+        return f"{self.__class__.__name__}('{self.name}{f'#L{self.line_number}' if self.line_number else ''}')"
 
     def __hash__(self):
         """
@@ -84,14 +89,17 @@ class Node:
         value = {
             "node": str(self),
         }
+
+        if self.line_number:
+            value["line_number"] = self.line_number
+
         return value
 
-    def get_tags(self):
+    def get_tags(self) -> set[str]:
         """
         Get the tags associated with the Node instance.
 
         Returns:
             set: A set containing the class name of the Node instance.
         """
-        tags = set([self.__class__.__name__])
-        return tags
+        return {self.__class__.__name__}.union(self.extra_tags)

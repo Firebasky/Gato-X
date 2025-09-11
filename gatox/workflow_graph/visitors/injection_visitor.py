@@ -16,16 +16,19 @@ limitations under the License.
 
 import logging
 
+from gatox.caching.cache_manager import CacheManager
 from gatox.enumerate.results.complexity import Complexity
 from gatox.enumerate.results.confidence import Confidence
 from gatox.enumerate.results.issue_type import IssueType
-from gatox.workflow_graph.graph.tagged_graph import TaggedGraph
-from gatox.workflow_parser.utility import CONTEXT_REGEX
-from gatox.workflow_parser.utility import getTokens, getToken, checkUnsafe
-from gatox.workflow_graph.visitors.visitor_utils import VisitorUtils
-from gatox.caching.cache_manager import CacheManager
 from gatox.github.api import Api
-
+from gatox.workflow_graph.graph.tagged_graph import TaggedGraph
+from gatox.workflow_graph.visitors.visitor_utils import VisitorUtils
+from gatox.workflow_parser.utility import (
+    CONTEXT_REGEX,
+    checkUnsafe,
+    getToken,
+    getTokens,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +40,7 @@ class InjectionVisitor:
     """
 
     @staticmethod
-    def find_injections(graph: TaggedGraph, api: Api, ignore_workflow_run=False):
+    async def find_injections(graph: TaggedGraph, api: Api, ignore_workflow_run=False):
         """
         Identify potential injection vulnerabilities within GitHub workflows.
 
@@ -90,11 +93,11 @@ class InjectionVisitor:
 
         for cn in nodes:
             try:
-                paths = graph.dfs_to_tag(cn, "injectable", api)
+                paths = await graph.dfs_to_tag(cn, "injectable", api)
                 if paths:
                     all_paths.append(paths)
             except Exception as e:
-                logger.error(f"Error finding paths for injection node: {e}")
+                logger.error(f"Error finding paths for injection node: {str(e)}")
                 logger.error(f"Node: {cn}")
 
         for path_set in all_paths:
@@ -110,29 +113,24 @@ class InjectionVisitor:
 
                     if "JobNode" in tags:
                         # Check deployment environment rules
-                        if node.deployments:
-                            if node.repo_name() in rule_cache:
-                                rules = rule_cache[node.repo_name()]
-                            else:
-                                rules = api.get_all_environment_protection_rules(
-                                    node.repo_name()
-                                )
-                                rule_cache[node.repo_name()] = rules
-                            for deployment in node.deployments:
-                                if isinstance(deployment, dict):
-                                    deployment = deployment["name"]
-                                deployment = VisitorUtils.process_context_var(
-                                    deployment
-                                )
+                        if (
+                            node.deployments
+                            and await VisitorUtils.check_deployment_approval_gate(
+                                node, rule_cache, api, input_lookup, env_lookup
+                            )
+                        ):
+                            approval_gate = True
+                            continue
 
-                                if deployment in rules:
-                                    approval_gate = True
-
-                        paths = graph.dfs_to_tag(node, "permission_check", api)
+                        paths = await graph.dfs_to_tag(
+                            node, "permission_check", api, ignore_depends=True
+                        )
                         if paths:
                             approval_gate = True
 
-                        paths = graph.dfs_to_tag(node, "permission_blocker", api)
+                        paths = await graph.dfs_to_tag(
+                            node, "permission_blocker", api, ignore_depends=True
+                        )
                         if paths:
                             break
 
@@ -164,7 +162,6 @@ class InjectionVisitor:
 
                             # Now we go and try to resolve variables.
                             for variable in node.contexts:
-
                                 if "inputs." in variable:
                                     if "${{" in variable:
                                         processed_var = CONTEXT_REGEX.findall(variable)
@@ -243,7 +240,7 @@ class InjectionVisitor:
                                     if "github." in val:
                                         env_lookup[key] = val
                     elif "ActionNode" in tags:
-                        VisitorUtils.initialize_action_node(graph, api, node)
+                        await VisitorUtils.initialize_action_node(graph, api, node)
 
                 # Goal here is to start from the top and keep track
                 # of any variables that come out of steps

@@ -16,14 +16,13 @@ limitations under the License.
 
 import logging
 
-from gatox.enumerate.results.confidence import Confidence
+from gatox.caching.cache_manager import CacheManager
 from gatox.enumerate.results.complexity import Complexity
+from gatox.enumerate.results.confidence import Confidence
 from gatox.enumerate.results.issue_type import IssueType
+from gatox.github.api import Api
 from gatox.workflow_graph.graph.tagged_graph import TaggedGraph
 from gatox.workflow_graph.visitors.visitor_utils import VisitorUtils
-from gatox.github.api import Api
-from gatox.workflow_parser.utility import CONTEXT_REGEX
-from gatox.caching.cache_manager import CacheManager
 
 logger = logging.getLogger(__name__)
 
@@ -32,15 +31,13 @@ class PwnRequestVisitor:
     """Visits the graph to find potential Pwn Requests."""
 
     @staticmethod
-    def _process_single_path(path, graph, api, rule_cache, results):
+    async def _process_single_path(path, graph, api, rule_cache, results):
         """
         Process a single path for potential security issues.
-
         This method analyzes a given path within the workflow graph to identify and flag
         potential security vulnerabilities related to Pwn (Privilege Escalation) requests.
         It inspects each node for specific tags, evaluates deployment environment rules,
         and determines if approval gates are required based on the analysis.
-
         Args:
             path (List[Node]):
                 The sequence of nodes representing a potential security path to process.
@@ -52,10 +49,8 @@ class PwnRequestVisitor:
                 A cache storing environment protection rules for repositories to avoid redundant API calls.
             results (dict):
                 A dictionary aggregating the detected security issues, organized by repository.
-
         Returns:
             None
-
         Raises:
             None
         """
@@ -68,39 +63,12 @@ class PwnRequestVisitor:
             tags = node.get_tags()
 
             if "JobNode" in tags:
-                # Check deployment environment rules
-                if node.deployments:
-                    if node.repo_name() in rule_cache:
-                        rules = rule_cache[node.repo_name()]
-                    else:
-                        rules = api.get_all_environment_protection_rules(
-                            node.repo_name()
-                        )
-                        rule_cache[node.repo_name()] = rules
-                    for deployment in node.deployments:
-                        if isinstance(deployment, dict):
-                            deployment = deployment["name"]
-                        deployment = VisitorUtils.process_context_var(deployment)
-
-                        if deployment in input_lookup:
-                            deployment = input_lookup[deployment]
-                        elif deployment in env_lookup:
-                            deployment = env_lookup[deployment]
-
-                        if deployment in rules:
-                            approval_gate = True
-                            continue
-
-                # if not node.if_evaluation:
-                #     approval_gate = True
-
-                paths = graph.dfs_to_tag(node, "permission_blocker", api)
+                # Exit fast if we hit a blocker
+                paths = await graph.dfs_to_tag(
+                    node, "permission_blocker", api, ignore_depends=True
+                )
                 if paths:
                     break
-
-                paths = graph.dfs_to_tag(node, "permission_check", api)
-                if paths:
-                    approval_gate = True
 
                 if node.outputs:
                     for o_key, val in node.outputs.items():
@@ -111,6 +79,22 @@ class PwnRequestVisitor:
                             for key in env_lookup.keys():
                                 if key in val:
                                     flexible_lookup[o_key] = env_lookup[key]
+                # Check deployment environment rules
+                if (
+                    node.deployments
+                    and await VisitorUtils.check_deployment_approval_gate(
+                        node, rule_cache, api, input_lookup, env_lookup
+                    )
+                ):
+                    approval_gate = True
+                    continue
+
+                paths = await graph.dfs_to_tag(
+                    node, "permission_check", api, ignore_depends=True
+                )
+                if paths:
+                    approval_gate = True
+                    continue
 
             elif "StepNode" in tags:
                 if node.is_checkout:
@@ -136,7 +120,7 @@ class PwnRequestVisitor:
                             checkout_ref, path[0].get_tags()
                         )
                     ) or not approval_gate:
-                        sinks = graph.dfs_to_tag(node, "sink", api)
+                        sinks = await graph.dfs_to_tag(node, "sink", api)
 
                         if approval_gate:
                             complexity = Complexity.TOCTOU
@@ -152,6 +136,19 @@ class PwnRequestVisitor:
                         else:
                             confidence = Confidence.UNKNOWN
 
+                        # Check if any blocker nodes or approval gate nodes are in the current path
+                        path_nodes = set(path)
+                        if sinks:
+                            path_nodes.update(sinks[0])
+
+                        # Recalculate complexity based on effective approval gate
+                        if approval_gate:
+                            complexity = Complexity.TOCTOU
+                        elif "workflow_run" in path[0].get_tags():
+                            complexity = Complexity.PREVIOUS_CONTRIBUTOR
+                        else:
+                            complexity = Complexity.ZERO_CLICK
+
                         VisitorUtils._add_results(
                             path,
                             results,
@@ -159,10 +156,11 @@ class PwnRequestVisitor:
                             complexity=complexity,
                             confidence=confidence,
                         )
+
                         break
 
                 if node.outputs:
-                    for key, val in node.outputs.items():
+                    for _key, val in node.outputs.items():
                         if "env." in val:
                             pass
 
@@ -170,6 +168,9 @@ class PwnRequestVisitor:
                     break
 
                 if node.soft_gate:
+                    logger.debug(
+                        f"Soft gate found in node {node.name}, setting approval_gate to True"
+                    )
                     approval_gate = True
 
             elif "WorkflowNode" in tags:
@@ -189,17 +190,19 @@ class PwnRequestVisitor:
                     if "pull_request_target:labeled" in tags:
                         approval_gate = True
 
-                    # Check workflow environment variables.
+                    # Check workflow environment variables
                     env_vars = node.get_env_vars()
                     for key, val in env_vars.items():
                         if isinstance(val, str) and "github." in val:
                             env_lookup[key] = val
 
             elif "ActionNode" in tags:
-                VisitorUtils.initialize_action_node(graph, api, node)
+                await VisitorUtils.initialize_action_node(graph, api, node)
 
     @staticmethod
-    def find_pwn_requests(graph: TaggedGraph, api: Api, ignore_workflow_run=False):
+    async def find_pwn_requests(
+        graph: TaggedGraph, api: Api, ignore_workflow_run=False
+    ):
         """
         Identify and process potential Pwn Requests within the workflow graph.
 
@@ -217,7 +220,7 @@ class PwnRequestVisitor:
                 Determines whether to ignore nodes tagged with "workflow_run". Defaults to False.
 
         Returns:
-            None
+            dict: Results containing any identified security issues organized by repository.
 
         Raises:
             None
@@ -234,27 +237,26 @@ class PwnRequestVisitor:
         # Retrieve all repository-related nodes with the specified tags
         nodes = graph.get_nodes_for_tags(query_taglist)
         all_paths = []
+        results = {}
+        rule_cache = {}
 
         for cn in nodes:
             try:
-                paths = graph.dfs_to_tag(cn, "checkout", api)
+                paths = await graph.dfs_to_tag(cn, "checkout", api)
                 if paths:
                     all_paths.append(paths)
             except Exception as e:
-                logger.error(f"Error finding paths for pwn request node: {e}")
+                logger.error(f"Error finding paths for pwn request node: {str(e)}")
                 logger.error(f"Node: {cn}")
-
-        results = {}
-        rule_cache = {}
 
         for path_set in all_paths:
             for path in path_set:
                 try:
-                    PwnRequestVisitor._process_single_path(
+                    await PwnRequestVisitor._process_single_path(
                         path, graph, api, rule_cache, results
                     )
-                # TODO: Make this more granular once all edge cases are handled.
                 except Exception as e:
-                    logger.warning(f"Error processing path: {e}")
+                    logger.warning(f"Error processing path: {str(e)}")
                     logger.warning(f"Path: {path}")
+
         return results

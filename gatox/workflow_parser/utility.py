@@ -1,11 +1,10 @@
-import re
 import logging
-
+import re
 from datetime import datetime, timedelta
 
 from gatox.configuration.configuration_manager import ConfigurationManager
-from gatox.workflow_parser.expression_parser import ExpressionParser
 from gatox.workflow_parser.expression_evaluator import ExpressionEvaluator
+from gatox.workflow_parser.expression_parser import ExpressionParser
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +30,6 @@ def starts_with_any(value: str, prefixes: list[str]) -> bool:
 def process_matrix(job_def, runs_on):
     """Process case where runner is specified via matrix."""
     try:
-
         matrix_match = MATRIX_KEY_EXTRACTION_REGEX.search(runs_on)
 
         if matrix_match:
@@ -68,9 +66,9 @@ def process_matrix(job_def, runs_on):
                 # list of labels
                 elif type(key) is list:
                     return True
-    except TypeError as e:
-        print("Error processing matrix job")
-        print(job_def)
+    except TypeError:
+        logger.error("Error processing matrix job")
+        logger.debug(job_def)
         return False
 
 
@@ -164,6 +162,10 @@ def parse_script(contents: str):
     if "isCrossRepository" in contents and "GITHUB_OUTPUT" in contents:
         return_dict["hard_gate"] = True
     if "github.rest.repos.checkCollaborator" in contents:
+        return_dict["soft_gate"] = True
+    if "github.rest.orgs.getMembershipForUser" in contents:
+        return_dict["soft_gate"] = True
+    if "rest.repos.listCollaborators" in contents:
         return_dict["soft_gate"] = True
     if "getCollaboratorPermissionLevel" in contents:
         return_dict["soft_gate"] = True
@@ -364,13 +366,15 @@ def check_false_if(if_check):
 
 
 @staticmethod
-def validate_if_check(if_check, variables={}):
+def validate_if_check(if_check, variables=None):
     """Function used to validate each if check.
     The strategy here is to "fail open". If we cannot
     determine with certainty the check would fail in an injection
     or pwn request scenario then we return True, because we would rather
     not miss a potential vulnerability.
     """
+    if variables is None:
+        variables = {}
     if not if_check:
         return True
 

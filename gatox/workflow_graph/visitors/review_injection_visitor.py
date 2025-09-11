@@ -16,28 +16,26 @@ limitations under the License.
 
 from gatox.enumerate.results.confidence import Confidence
 from gatox.enumerate.results.issue_type import IssueType
+from gatox.github.api import Api
 from gatox.workflow_graph.graph.tagged_graph import TaggedGraph
-from gatox.workflow_parser.utility import CONTEXT_REGEX
+from gatox.workflow_graph.visitors.visitor_utils import VisitorUtils
 from gatox.workflow_parser.utility import (
-    getTokens,
+    CONTEXT_REGEX,
     getToken,
-    checkUnsafe,
+    getTokens,
     prReviewUnsafe,
 )
-from gatox.workflow_graph.visitors.visitor_utils import VisitorUtils
-from gatox.caching.cache_manager import CacheManager
-from gatox.github.api import Api
 
 
 class ReviewInjectionVisitor:
     """
     This class implements a graph visitor tasked with identifying
     injection issues on the pull_request_review and
-    pull_request_review comment triggers..
+    pull_request_review comment triggers.
     """
 
     @staticmethod
-    def find_injections(graph: TaggedGraph, api: Api):
+    async def find_injections(graph: TaggedGraph, api: Api):
         """
         Identify potential injection vulnerabilities within GitHub workflows.
 
@@ -78,7 +76,7 @@ class ReviewInjectionVisitor:
         rule_cache = {}
 
         for cn in nodes:
-            paths = graph.dfs_to_tag(cn, "injectable", api)
+            paths = await graph.dfs_to_tag(cn, "injectable", api)
             if paths:
                 all_paths.append(paths)
 
@@ -94,25 +92,16 @@ class ReviewInjectionVisitor:
 
                     if "JobNode" in tags:
                         # Check deployment environment rules
-                        if node.deployments:
-                            if node.repo_name() in rule_cache:
-                                rules = rule_cache[node.repo_name()]
-                            else:
-                                rules = api.get_all_environment_protection_rules(
-                                    node.repo_name()
-                                )
-                                rule_cache[node.repo_name()] = rules
-                            for deployment in node.deployments:
-                                if isinstance(deployment, dict):
-                                    deployment = deployment["name"]
-                                deployment = VisitorUtils.process_context_var(
-                                    deployment
-                                )
+                        if (
+                            node.deployments
+                            and await VisitorUtils.check_deployment_approval_gate(
+                                node, rule_cache, api, input_lookup, env_lookup
+                            )
+                        ):
+                            approval_gate = True
+                            continue
 
-                                if deployment in rules:
-                                    approval_gate = True
-
-                        paths = graph.dfs_to_tag(node, "permission_check", api)
+                        paths = await graph.dfs_to_tag(node, "permission_check", api)
                         if paths:
                             approval_gate = True
 
@@ -144,7 +133,6 @@ class ReviewInjectionVisitor:
 
                             # Now we go and try to resolve variables.
                             for variable in node.contexts:
-
                                 if "inputs." in variable:
                                     if "${{" in variable:
                                         processed_var = CONTEXT_REGEX.findall(variable)
@@ -187,7 +175,7 @@ class ReviewInjectionVisitor:
                                     VisitorUtils._add_results(
                                         path,
                                         results,
-                                        IssueType.PR_REVIEW_INJECTON,
+                                        IssueType.PR_REVIEW_INJECTION,
                                         confidence=conf,
                                     )
                                     break
@@ -198,8 +186,6 @@ class ReviewInjectionVisitor:
                             # Set lookup for input params
                             input_lookup.update(node_params)
                         if index == 0:
-                            repo = CacheManager().get_repository(node.repo_name())
-
                             # Check workflow environment variables.
                             # For env vars that are github.event.*
                             env_vars = node.get_env_vars()
@@ -208,7 +194,7 @@ class ReviewInjectionVisitor:
                                     if "github." in val:
                                         env_lookup[key] = val
                     elif "ActionNode" in tags:
-                        VisitorUtils.initialize_action_node(graph, api, node)
+                        await VisitorUtils.initialize_action_node(graph, api, node)
 
                 # Goal here is to start from the top and keep track
                 # of any variables that come out of steps

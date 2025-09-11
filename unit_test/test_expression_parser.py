@@ -1,6 +1,5 @@
-from gatox.workflow_parser.expression_parser import ExpressionParser
 from gatox.workflow_parser.expression_evaluator import ExpressionEvaluator
-
+from gatox.workflow_parser.expression_parser import ExpressionParser
 
 # steps.get_changes.outputs.changed != 0
 # always() && (needs.build-artifacts.result == 'failure' || needs.github-release.result == 'failure')
@@ -83,7 +82,7 @@ def test_parse5():
     if_check = "github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'preview' && github.event.sender.id == 35613825 && github.event.repository.name == 'dev-portal'"
     expr = ExpressionParser(if_check)
     expr.print_ast()
-    evaluator = ExpressionEvaluator()
+    ExpressionEvaluator()
 
 
 def test_simple_evaluate():

@@ -14,20 +14,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import re
 import logging
 
-
-from gatox.enumerate.results.confidence import Confidence
-from gatox.enumerate.results.complexity import Complexity
-from gatox.enumerate.results.issue_type import IssueType
-from gatox.workflow_graph.graph.tagged_graph import TaggedGraph
-from gatox.workflow_graph.graph_builder import WorkflowGraphBuilder
-from gatox.workflow_graph.visitors.visitor_utils import VisitorUtils
-from gatox.github.api import Api
-from gatox.workflow_parser.utility import CONTEXT_REGEX
 from gatox.caching.cache_manager import CacheManager
-
+from gatox.enumerate.results.complexity import Complexity
+from gatox.enumerate.results.confidence import Confidence
+from gatox.enumerate.results.issue_type import IssueType
+from gatox.github.api import Api
+from gatox.workflow_graph.graph.tagged_graph import TaggedGraph
+from gatox.workflow_graph.visitors.visitor_utils import VisitorUtils
+from gatox.workflow_parser.utility import CONTEXT_REGEX
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +41,7 @@ class DispatchTOCTOUVisitor:
     """
 
     @staticmethod
-    def find_dispatch_misconfigurations(graph: TaggedGraph, api: Api):
+    async def find_dispatch_misconfigurations(graph: TaggedGraph, api: Api):
         """
         Identifies TOCTOU vulnerabilities in workflows that are triggered by workflow dispatch
         events and handle pull request (PR) numbers without accompanying SHA references.
@@ -63,36 +59,30 @@ class DispatchTOCTOUVisitor:
             api (Api): An instance of the API wrapper to interact with GitHub APIs.
 
         Returns:
-            None
+            dict: Results containing any identified TOCTOU vulnerabilities organized by repository.
 
         Raises:
             Exception: Catches and logs any exceptions that occur during path processing.
         """
-        # Retrieve all nodes tagged with "workflow_dispatch"
-        nodes = graph.get_nodes_for_tags(
-            [
-                "workflow_dispatch",
-            ]
-        )
-
+        nodes = graph.get_nodes_for_tags(["workflow_dispatch"])
         all_paths = []
         results = {}
 
-        # Perform DFS from each "workflow_dispatch" node to find paths to "checkout" nodes
         for cn in nodes:
             try:
-                paths = graph.dfs_to_tag(cn, "checkout", api)
+                paths = await graph.dfs_to_tag(cn, "checkout", api)
                 if paths:
                     all_paths.append(paths)
             except Exception as e:
-                logger.error(f"Error finding paths for dispatch node: {e}")
+                logger.error(f"Error finding paths for dispatch node: {str(e)}")
                 logger.warning(f"Node: {cn}")
 
-        # Process each discovered path to identify TOCTOU vulnerabilities
         for path_set in all_paths:
             for path in path_set:
                 try:
-                    DispatchTOCTOUVisitor.__process_path(path, graph, api, results)
+                    await DispatchTOCTOUVisitor.__process_path(
+                        path, graph, api, results
+                    )
                 except Exception as e:
                     logger.warning(f"Error processing path: {e}")
                     logger.warning(f"Path: {path}")
@@ -100,7 +90,7 @@ class DispatchTOCTOUVisitor:
         return results
 
     @staticmethod
-    def __process_path(path, graph: TaggedGraph, api: Api, results: dict):
+    async def __process_path(path, graph: TaggedGraph, api: Api, results: dict):
         """
         Processes a single path within the workflow graph to identify potential TOCTOU
         vulnerabilities.
@@ -123,11 +113,9 @@ class DispatchTOCTOUVisitor:
         Raises:
             Exception: Propagates any exceptions that occur during the processing of the path.
         """
-        input_lookup = {}
-
         # Workflow dispatch jobs inherently have an approval gate,
         # so only TOCTOU issues can be exploited.
-        approval_gate = True
+        input_lookup = {}
         env_lookup = {}
         flexible_lookup = {}
 
@@ -148,7 +136,6 @@ class DispatchTOCTOUVisitor:
                     node_params = path[index - 1].params
                     # Set lookup for input params
                     input_lookup.update(node_params)
-
                 if index == 0:
                     repo = CacheManager().get_repository(node.repo_name())
                     if repo.is_fork():
@@ -159,22 +146,9 @@ class DispatchTOCTOUVisitor:
                     if not node.inputs:
                         break
 
-                    pr_num_found = False
-                    # Process inputs to determine if any contain a PR number.
-                    # This is a heuristic to identify workflows that are taking a PR number
-                    # or mutable reference.
-                    for key, val in node.inputs.items():
-                        if "sha" in key.lower():
-                            break
-                        elif re.search(
-                            r"\b(pr|pull|pull_request|pr_number)\b",
-                            key,
-                            re.IGNORECASE,
-                        ):
-                            pr_num_found = True
-                            break
-
-                    if not pr_num_found:
+                    # Check if workflow has TOCTOU risk (PR number without required SHA)
+                    # we already check for this, but we double check.
+                    if not VisitorUtils.has_dispatch_toctou_risk(node.inputs):
                         break
 
                     # Check workflow environment variables for GitHub event references
@@ -206,7 +180,7 @@ class DispatchTOCTOUVisitor:
                             checkout_ref = input_lookup[processed_var]
 
                     if VisitorUtils.check_mutable_ref(checkout_ref):
-                        sinks = graph.dfs_to_tag(node, "sink", api)
+                        sinks = await graph.dfs_to_tag(node, "sink", api)
                         if sinks:
                             VisitorUtils.append_path(path, sinks[0])
                             VisitorUtils._add_results(
@@ -226,4 +200,4 @@ class DispatchTOCTOUVisitor:
                             )
 
             elif "ActionNode" in tags:
-                VisitorUtils.initialize_action_node(graph, api, node)
+                await VisitorUtils.initialize_action_node(graph, api, node)

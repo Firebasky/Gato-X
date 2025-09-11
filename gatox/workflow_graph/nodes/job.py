@@ -15,7 +15,6 @@ limitations under the License.
 """
 
 from gatox.workflow_graph.nodes.node import Node
-
 from gatox.workflow_parser.utility import (
     process_matrix,
     process_runner,
@@ -32,7 +31,14 @@ class JobNode(Node):
         params (dict): Parameters associated with the job node.
     """
 
-    def __init__(self, job_name: str, ref: str, repo_name: str, workflow_path: str):
+    def __init__(
+        self,
+        job_name: str,
+        ref: str,
+        repo_name: str,
+        workflow_path: str,
+        line_number=None,
+    ):
         """
         Constructor for the job wrapper.
 
@@ -43,7 +49,7 @@ class JobNode(Node):
             workflow_path (str): The path to the workflow file.
         """
         # Create a unique ID for this step.
-        self.name = f"{repo_name}:{ref}:{workflow_path}:{job_name}"
+        super().__init__(f"{repo_name}:{ref}:{workflow_path}:{job_name}", line_number)
         self.ref = ref
         self.__workflow_path = workflow_path
         self.params = {}
@@ -110,7 +116,6 @@ class JobNode(Node):
         return True
 
     def populate(self, job_def, wf_node):
-
         self.wf_reference = wf_node
 
         if not isinstance(job_def, dict):
@@ -128,17 +133,17 @@ class JobNode(Node):
             self.self_hosted = self._check_selfhosted(job_def)
 
         if "environment" in job_def:
-            if type(job_def["environment"]) == list:
+            if type(job_def["environment"]) is list:
                 self.deployments.extend(job_def["environment"])
             else:
                 self.deployments.append(job_def["environment"])
 
-        if "env" in job_def and type(job_def["env"]) == dict:
+        if "env" in job_def and type(job_def["env"]) is dict:
             self.__env_vars = job_def["env"]
 
         if job_def and "if" in job_def:
             self.if_condition = job_def["if"]
-            if type(self.if_condition) == str:
+            if type(self.if_condition) is str:
                 self.if_condition = self.if_condition.replace("\n", "")
                 self.if_evaluation = validate_if_check(self.if_condition, {})
             else:
@@ -169,9 +174,7 @@ class JobNode(Node):
             value: A dict representation of the Node instance.
         """
 
-        value = {
-            "node": str(self),
-        }
+        value = super().get_repr()
         if self.get_if():
             value["if"] = self.get_if()
             if self.if_evaluation is not None and type(self.if_evaluation) is bool:
@@ -199,7 +202,7 @@ class JobNode(Node):
         Returns:
             set: A set containing the class name of the JobNode instance.
         """
-        tags = set([self.__class__.__name__])
+        tags = super().get_tags()
 
         if self.self_hosted:
             tags.add("self-hosted")

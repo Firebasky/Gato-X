@@ -1,6 +1,7 @@
-import requests
 import os
 import sys
+
+import httpx
 
 reg_pat = os.environ.get("SH_RUNNER_MANAGE_TOKEN")
 dispatch_pat = os.environ.get("WF_DISPATCH_TOKEN")
@@ -9,14 +10,13 @@ run_ref = os.environ.get("RUN_REF")
 
 # Quick helper script for integration tests to get add/remove tokens.
 if sys.argv[1] == "remove":
-
     headers = {
         "Accept": "application/vnd.github+json",
         "Authorization": f"Bearer {reg_pat}",
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
-    response = requests.post(
+    response = httpx.post(
         "https://api.github.com/orgs/gatoxtest/actions/runners/remove-token",
         headers=headers,
     )
@@ -25,14 +25,13 @@ if sys.argv[1] == "remove":
         command = f"./config.sh remove --token {token} --name ghrunner-test"
         os.system(command)
 elif sys.argv[1] == "register":
-
     headers = {
         "Accept": "application/vnd.github+json",
         "Authorization": f"Bearer {reg_pat}",
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
-    response = requests.post(
+    response = httpx.post(
         "https://api.github.com/orgs/gatoxtest/actions/runners/registration-token",
         headers=headers,
     )
@@ -42,7 +41,6 @@ elif sys.argv[1] == "register":
         command = f"./config.sh --url https://github.com/gatoxtest --unattended --token {token} --name ghrunner-test"
         os.system(command)
 elif sys.argv[1] == "dispatch":
-
     headers = {
         "Accept": "application/vnd.github+json",
         "Authorization": f"Bearer {dispatch_pat}",
@@ -51,7 +49,7 @@ elif sys.argv[1] == "dispatch":
 
     data = {"ref": run_ref}
 
-    response = requests.post(
+    response = httpx.post(
         "https://api.github.com/repos/AdnaneKhan/gato-x/actions/workflows/integration_sh.yaml/dispatches",
         headers=headers,
         json=data,
@@ -68,7 +66,7 @@ elif sys.argv[1] == "force_remove":
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
-    response = requests.get(
+    response = httpx.get(
         "https://api.github.com/orgs/gatoxtest/actions/runners",
         headers=headers,
     )
@@ -84,7 +82,7 @@ elif sys.argv[1] == "force_remove":
 
         if runner:
             remove_id = runner[0]["id"]
-            resp = requests.delete(
+            resp = httpx.delete(
                 f"https://api.github.com/orgs/gatoxtest/actions/runners/{remove_id}",
                 headers=headers,
             )

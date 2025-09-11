@@ -1,10 +1,12 @@
-from gatox.cli import cli
+import asyncio
 import sys
+
+from gatox.cli import cli
 
 
 def entry():
-    sys.exit(cli.cli(sys.argv[1:]))
+    return asyncio.run(cli.cli(sys.argv[1:]))
 
 
 if __name__ == "__main__":
-    sys.exit(cli.cli(sys.argv[1:]))
+    sys.exit(entry())

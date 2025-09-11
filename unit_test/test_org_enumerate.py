@@ -1,12 +1,12 @@
+import json
 import os
 import pathlib
+from unittest.mock import AsyncMock
+
 import pytest
-import json
 
-from unittest.mock import MagicMock
-
-from gatox.models.organization import Organization
 from gatox.enumerate.organization import OrganizationEnum
+from gatox.models.organization import Organization
 
 TEST_ORG_DATA = None
 TEST_REPO_DATA = None
@@ -22,20 +22,20 @@ def load_test_files(request):
     test_org_path = os.path.join(curr_path, "files/example_org.json")
     test_wf_path = os.path.join(curr_path, "files/main.yaml")
 
-    with open(test_repo_path, "r") as repo_data:
+    with open(test_repo_path) as repo_data:
         TEST_REPO_DATA = json.load(repo_data)
 
-    with open(test_org_path, "r") as repo_data:
+    with open(test_org_path) as repo_data:
         TEST_ORG_DATA = json.load(repo_data)
 
-    with open(test_wf_path, "r") as wf_data:
+    with open(test_wf_path) as wf_data:
         TEST_WORKFLOW_YML = wf_data.read()
 
 
-def test_assemble_repo_list():
+async def test_assemble_repo_list():
     """Test getting a list of repos to scan from org."""
 
-    mock_api = MagicMock()
+    mock_api = AsyncMock()
 
     test_private_repodata = TEST_REPO_DATA.copy()
     test_private_repodata["visibility"] = "private"
@@ -53,18 +53,18 @@ def test_assemble_repo_list():
 
     organization = Organization(TEST_ORG_DATA, user_scopes=["repo", "workflow"])
 
-    repos = gh_enumeration_runner.construct_repo_enum_list(organization)
+    repos = await gh_enumeration_runner.construct_repo_enum_list(organization)
 
     assert len(repos) == 2
     assert repos[0].is_public() is False
     assert repos[1].is_public() is True
 
 
-def test_admin_enum():
+async def test_admin_enum():
     """Test checks that Gato performs if the user is an org admin and has an
     appropriately scoped token."""
 
-    mock_api = MagicMock()
+    mock_api = AsyncMock()
 
     organization = Organization(
         TEST_ORG_DATA, user_scopes=["repo", "workflow", "admin:org"]
@@ -105,7 +105,7 @@ def test_admin_enum():
     ]
     gh_enumeration_runner = OrganizationEnum(mock_api)
 
-    gh_enumeration_runner.admin_enum(organization)
+    await gh_enumeration_runner.admin_enum(organization)
 
     assert len(organization.secrets) == 2
     assert len(organization.runners) == 1

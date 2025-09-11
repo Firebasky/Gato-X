@@ -1,7 +1,11 @@
 name: Test and Lint
-on: 
-    push:
-    pull_request:
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - '*'
 
 jobs:
     Linux-test-and-lint:
@@ -15,9 +19,9 @@ jobs:
 
         steps:
           - name: Checkout the repo
-            uses: actions/checkout@v4
+            uses: actions/checkout@v5
           - name: Setup python
-            uses: actions/setup-python@v5
+            uses: actions/setup-python@v6
             with:
               python-version: ${{ matrix.python-version }}
           - run: |
@@ -33,6 +37,9 @@ jobs:
           - name: Test with Pytest
             run: |
               pytest --cov-fail-under=60
+          - uses: astral-sh/ruff-action@57714a7c8a2e59f32539362ba31877a1957dded1 # v3.5.1
+            with:
+              src: "./gatox"
 
     OSX-test-and-lint:
         name: OS X Test and Lint
@@ -45,9 +52,9 @@ jobs:
 
         steps:
           - name: Checkout the repo
-            uses: actions/checkout@v4
+            uses: actions/checkout@v5
           - name: Setup python
-            uses: actions/setup-python@v5
+            uses: actions/setup-python@v6
             with:
               python-version: ${{ matrix.python-version }}
           - run: |

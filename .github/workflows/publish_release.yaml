@@ -14,7 +14,7 @@ jobs:
       version_bumped: ${{ steps.check.outputs.version_bumped }}
       version: ${{ steps.check.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 2  # Ensure access to the previous commit
 
@@ -41,10 +41,10 @@ jobs:
       attestations: write
     if: needs.check_version.outputs.version_bumped == 'true' || github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4 
+      - uses: actions/checkout@v5 
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.x'
       - name: Install pypa/build
@@ -55,7 +55,7 @@ jobs:
           --user
       - name: Build Binary wheel Source Tarball
         run: python3 -m build
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v3
         with:
           subject-path: 'dist/gato_x-*'
       - name: Store Distribution Packages
@@ -75,27 +75,27 @@ jobs:
       id-token: write
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: python-package-distributions
           path: dist/
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.x'
       - name: Publish Distribution
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc # v1.12.4
       - name: Sign the dists with Sigstore
-        uses: sigstore/gh-action-sigstore-python@f514d46b907ebcd5bedc05145c03b69c1edd8b46
+        uses: sigstore/gh-action-sigstore-python@f7ad0af51a5648d09a20d00370f0a91c3bdf8f84
         with:
           inputs: >-
             ./dist/*.tar.gz
             ./dist/*.whl
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda
+        uses: softprops/action-gh-release@6cbd405e2c4e67a21c47fa9e383d020e4e28b836
         with:
           tag_name: v${{ needs.check_version.outputs.version }}
           name: Gato-X Release v${{ needs.check_version.outputs.version }}

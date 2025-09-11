@@ -14,55 +14,54 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import time
-import random
-import threading
+import asyncio
 import logging
+import random
 
-from requests.exceptions import RequestException
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import as_completed
+from httpx import RequestError
 
 from gatox.caching.cache_manager import CacheManager
-from gatox.models.workflow import Workflow
-from gatox.models.repository import Repository
-from gatox.workflow_graph.graph_builder import WorkflowGraphBuilder
 from gatox.cli.output import Output
+from gatox.models.repository import Repository
+from gatox.models.workflow import Workflow
+from gatox.workflow_graph.graph_builder import WorkflowGraphBuilder
 
 logger = logging.getLogger(__name__)
 
 
 class DataIngestor:
     """Utility methods for performing parallel ingestion of data
-    from GitHub using threadpools and GraphQL.
+    from GitHub using asyncio.
     """
 
-    __counter = 0
-    __lock = threading.Lock()
-    __rl_lock = threading.Lock()
+    __completed_batches = 0
+    __lock = asyncio.Lock()
+    __rl_lock = asyncio.Lock()
 
     @classmethod
-    def update_count(cls, batch: int):
+    async def update_count(cls):
         """
-        Update the class-level counter if the provided batch number is greater than the current counter.
-
-        Args:
-            batch (int): The batch number to compare with the current counter.
+        Increment the count of completed batches.
 
         Returns:
             None
         """
-        with cls.__lock:
-            if batch > cls.__counter:
-                cls.__counter = batch
+        async with cls.__lock:
+            cls.__completed_batches += 1
 
     @classmethod
     def check_status(cls):
-        """This method returns the value of the class variable __counter."""
-        return cls.__counter
+        """This method returns the count of completed batches."""
+        return cls.__completed_batches
 
     @classmethod
-    def perform_parallel_repo_ingest(cls, api, org, repo_count):
+    async def reset_count(cls):
+        """Reset the completed batches counter to 0."""
+        async with cls.__lock:
+            cls.__completed_batches = 0
+
+    @classmethod
+    async def perform_parallel_repo_ingest(cls, api, org, repo_count):
         """
         Perform a parallel query of repositories up to the count within a given organization.
 
@@ -75,8 +74,9 @@ class DataIngestor:
             list: A list of repositories retrieved from the organization.
         """
         repos = []
+        tasks = []
 
-        def make_query(increment):
+        async def make_query(increment):
             """
             Makes a query to retrieve repositories for a given page.
             Attempts up to 5 times if the request fails.
@@ -91,29 +91,32 @@ class DataIngestor:
 
             sleep_timer = 4
             for _ in range(0, 5):
-                repos = api.call_get(f"/orgs/{org}/repos", params=get_params)
+                repos = await api.call_get(f"/orgs/{org}/repos", params=get_params)
                 if repos.status_code == 200:
                     return repos.json()
                 else:
-                    time.sleep(sleep_timer)
+                    await asyncio.sleep(sleep_timer)
                     sleep_timer = sleep_timer * 2
+
             Output.error("Unable to query. Will miss repositories.")
+            return None
 
         batches = (repo_count // 100) + 1
 
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = []
-            for batch in range(1, batches + 1):
-                futures.append(executor.submit(make_query, batch))
-            for future in as_completed(futures):
-                listing = future.result()
-                if listing:
-                    repos.extend([repo for repo in listing if not repo["archived"]])
+        # Create tasks for all batches
+        for batch in range(1, batches + 1):
+            tasks.append(asyncio.create_task(make_query(batch)))
+
+        # Wait for all tasks to complete and collect results
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for listing in results:
+            if listing:
+                repos.extend([repo for repo in listing if not repo["archived"]])
 
         return repos
 
     @classmethod
-    def perform_query(cls, api, work_query, batch):
+    async def perform_query(cls, api, work_query, batch):
         """
         Performs a GraphQL query of repositories with up to 3 attempts, increasing the sleep timer from 4, 8, and then finally 16 seconds.
 
@@ -134,28 +137,28 @@ class DataIngestor:
                 # but if no other thread is sleeping, we want to move on
                 # to query.
                 while cls.__rl_lock.locked():
-                    time.sleep(0.1)
+                    await asyncio.sleep(0.1)
                 try:
-                    result = api.call_post("/graphql", work_query)
-                except RequestException:
-                    logging.error("Request exception occurred, trying again.")
-                    time.sleep(15 + random.randint(0, 3))
+                    result = await api.call_post("/graphql", work_query)
+                except RequestError as e:
+                    logger.error(f"Request error occurred: {e}, trying again.")
+                    await asyncio.sleep(15 + random.randint(0, 3))
                     continue
 
                 # Sometimes we don't get a 200, fall back in this case.
                 if result.status_code == 200:
                     json_res = result.json()["data"]
-                    DataIngestor.update_count(batch)
+                    await cls.update_count()
                     if "nodes" in json_res:
                         return result.json()["data"]["nodes"]
                     else:
                         return result.json()["data"].values()
                 elif result.status_code == 403:
-                    with cls.__rl_lock:
-                        time.sleep(15 + random.randint(0, 3))
+                    async with cls.__rl_lock:
+                        await asyncio.sleep(15 + random.randint(0, 3))
                 else:
                     # Add some jitter
-                    time.sleep(10 + random.randint(0, 3))
+                    await asyncio.sleep(10 + random.randint(0, 3))
 
             Output.warn(
                 f"GraphQL attempts failed for batch {str(batch)}, will revert to REST for impacted repos."
@@ -168,7 +171,7 @@ class DataIngestor:
             logger.warning(f"{type(e)}: {str(e)}")
 
     @staticmethod
-    def construct_workflow_cache(yml_results):
+    async def construct_workflow_cache(yml_results):
         """
         Creates a cache of workflow YAML files retrieved from GraphQL. Since GraphQL and REST do not have parity,
         REST is still used for most enumeration calls. This method saves all YAML files, so during organization-level
@@ -268,6 +271,6 @@ class DataIngestor:
                                 continue
 
                             cache.set_workflow(owner, yml_name, wf_wrapper)
-                            WorkflowGraphBuilder().build_graph_from_yaml(
+                            await WorkflowGraphBuilder().build_graph_from_yaml(
                                 wf_wrapper, repo_wrapper
                             )

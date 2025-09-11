@@ -1,18 +1,18 @@
 import unittest
 from unittest.mock import MagicMock
-from gatox.enumerate.ingest.ingest import DataIngestor
+
 from gatox.caching.cache_manager import CacheManager
+from gatox.enumerate.ingest.ingest import DataIngestor
 
 
-class TestConstructWorkflowCache(unittest.TestCase):
-
+class TestConstructWorkflowCache(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.workflow = MagicMock()
         self.repository = MagicMock()
         CacheManager._instance = None
         self.cache_manager = CacheManager()
-        Workflow = MagicMock(return_value=self.workflow)
-        Repository = MagicMock(return_value=self.repository)
+        MagicMock(return_value=self.workflow)
+        MagicMock(return_value=self.repository)
         self.yml_results = [
             {
                 "nameWithOwner": "owner/repo1",
@@ -38,27 +38,27 @@ class TestConstructWorkflowCache(unittest.TestCase):
             }
         ]
 
-    def test_construct_workflow_cache_none(self):
+    async def test_construct_workflow_cache_none(self):
         # Test with None input
-        assert DataIngestor.construct_workflow_cache(None) is None
+        assert await DataIngestor.construct_workflow_cache(None) is None
 
-    def test_construct_workflow_cache_empty_list(self):
+    async def test_construct_workflow_cache_empty_list(self):
         # Test with empty list input
-        DataIngestor.construct_workflow_cache([])
+        await DataIngestor.construct_workflow_cache([])
 
         assert CacheManager()._instance.repo_wf_lookup == {}
         assert CacheManager()._instance.workflow_cache == {}
 
-    def test_construct_workflow_cache_valid_input(self):
+    async def test_construct_workflow_cache_valid_input(self):
         # Test with valid input
-        DataIngestor.construct_workflow_cache(self.yml_results)
+        await DataIngestor.construct_workflow_cache(self.yml_results)
 
         assert CacheManager().is_repo_cached("owner/repo1") is True
 
-    def test_construct_workflow_cache_malformed_data(self):
+    async def test_construct_workflow_cache_malformed_data(self):
         # Test with malformed data
         malformed_data = [{"invalid_key": "invalid_value"}]
-        DataIngestor.construct_workflow_cache(malformed_data)
+        await DataIngestor.construct_workflow_cache(malformed_data)
 
         assert not CacheManager().is_repo_cached("invalid_key")
 

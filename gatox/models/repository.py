@@ -1,8 +1,8 @@
 import datetime
 
+from gatox.enumerate.results.analysis_result import AnalysisResult
 from gatox.models.runner import Runner
 from gatox.models.secret import Secret
-from gatox.enumerate.results.analysis_result import AnalysisResult
 
 
 class Repository:
@@ -33,7 +33,7 @@ class Repository:
         self.sh_runner_access = False
         self.accessible_runners: list[Runner] = []
         self.runners: list[Runner] = []
-        self.risks = []
+        self.risks = {}
 
     def is_admin(self):
         return self.permission_data.get("admin", False)
@@ -114,11 +114,12 @@ class Repository:
 
     def get_risks(self):
         """Return repository risks."""
-        return self.risks
+        return list(self.risks.values())
 
     def set_results(self, result: AnalysisResult):
         """Set results on the repository object."""
-        self.risks.append(result)
+        key = result.get_first_and_last_hash()
+        self.risks[key] = result
 
     def toJSON(self):
         """Converts the repository to a Gato JSON representation."""
@@ -128,14 +129,14 @@ class Repository:
             "permissions": self.permission_data,
             "can_fork": self.can_fork(),
             "stars": self.repo_data["stargazers_count"],
-            "runner_workflows": [wf for wf in self.sh_workflow_names],
+            "runner_workflows": list(self.sh_workflow_names),
             "accessible_runners": [
                 runner.toJSON() for runner in self.accessible_runners
             ],
             "repo_runners": [runner.toJSON() for runner in self.runners],
             "repo_secrets": [secret.toJSON() for secret in self.secrets],
             "org_secrets": [secret.toJSON() for secret in self.org_secrets],
-            "risks": [risk.to_machine() for risk in self.risks],
+            "risks": [risk.to_machine() for risk in self.get_risks()],
         }
 
         return representation

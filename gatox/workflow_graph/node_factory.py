@@ -14,13 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from gatox.workflow_graph.nodes.step import StepNode
-from gatox.workflow_graph.nodes.workflow import WorkflowNode
+from gatox.models.repository import Repository
+from gatox.models.workflow import Workflow
+from gatox.workflow_graph.nodes.action import ActionNode
 from gatox.workflow_graph.nodes.job import JobNode
 from gatox.workflow_graph.nodes.repo import RepoNode
-from gatox.workflow_graph.nodes.action import ActionNode
-from gatox.models.workflow import Workflow
-from gatox.models.repository import Repository
+from gatox.workflow_graph.nodes.step import StepNode
+from gatox.workflow_graph.nodes.workflow import WorkflowNode
 from gatox.workflow_parser.utility import parse_github_path
 
 
@@ -58,7 +58,9 @@ class NodeFactory:
             return repo_node, True
 
     @staticmethod
-    def create_job_node(job_name, ref, repo_name, workflow_path, needs: list = []):
+    def create_job_node(
+        job_name, ref, repo_name, workflow_path, line_number=None, needs: list = None
+    ):
         """
         Create a JobNode for the specified job and cache it.
 
@@ -76,7 +78,9 @@ class NodeFactory:
         Returns:
             JobNode: The created or cached JobNode instance.
         """
-        job_node = JobNode(job_name, ref, repo_name, workflow_path)
+        if needs is None:
+            needs = []
+        job_node = JobNode(job_name, ref, repo_name, workflow_path, line_number)
         if job_node.name in NodeFactory.NODE_CACHE:
             return NodeFactory.NODE_CACHE[job_node.name]
         else:
@@ -139,6 +143,10 @@ class NodeFactory:
             repo_name, path, ref = parse_github_path(callee)
             workflow_name = path.split("/")[-1]
             workflow_path = f".github/workflows/{workflow_name}"
+        else:
+            raise ValueError(
+                f"Invalid callee format: {callee}. Expected format is './path/to/workflow' or 'repo/path@ref'."
+            )
 
         name = f"{repo_name}:{ref}:{workflow_path}"
         if name in NodeFactory.NODE_CACHE:
@@ -150,7 +158,13 @@ class NodeFactory:
 
     @staticmethod
     def create_step_node(
-        step_data, ref, repo_name, workflow_path, job_name, step_number
+        step_data,
+        ref,
+        repo_name,
+        workflow_path,
+        job_name,
+        step_number,
+        line_number=None,
     ):
         """
         Create a StepNode for the specified step and cache it.
@@ -170,20 +184,21 @@ class NodeFactory:
             StepNode: The created StepNode instance.
         """
         step_node = StepNode(
-            step_data, ref, repo_name, workflow_path, job_name, step_number
+            step_data, ref, repo_name, workflow_path, job_name, step_number, line_number
         )
         NodeFactory.NODE_CACHE[step_node.name] = step_node
         return step_node
 
     @staticmethod
-    def create_action_node(action_name, ref, action_path, repo_name, params={}):
+    def create_action_node(
+        action_name, ref, action_path, repo_name, params=None, usage_context=None
+    ):
         """
-        Create an ActionNode for the specified action and cache it.
+        Create an ActionNode for the specified action with unique usage context.
 
-        This method constructs the name of the ActionNode using the repository name,
-        reference, action path, and action name. It then checks if an ActionNode with
-        this name exists in the cache. If it does, it returns the cached node.
-        Otherwise, it creates a new ActionNode, caches it, and then returns it.
+        This method constructs a unique name for the ActionNode that includes the
+        usage context (workflow, job, step position) to ensure each action usage
+        gets its own node even when the same action is used multiple times.
 
         Args:
             action_name (str): The name of the action.
@@ -191,14 +206,28 @@ class NodeFactory:
             action_path (str): The file system path to the action within the repository.
             repo_name (str): The name of the repository where the action resides.
             params (dict, optional): Additional parameters for the action.
+            usage_context (dict, optional): Context about where this action is used
+                                          (workflow_name, job_id, step_index).
 
         Returns:
             ActionNode: The created or cached ActionNode instance.
         """
-        name = f"{repo_name}:{ref}:{action_path}:{action_name}"
-        if name in NodeFactory.NODE_CACHE:
-            return NodeFactory.NODE_CACHE[name]
+        # Create a context-aware unique name for this action usage
+        if params is None:
+            params = {}
+        if usage_context:
+            workflow_name = usage_context.get("workflow_name", "unknown")
+            job_id = usage_context.get("job_id", "unknown")
+            step_index = usage_context.get("step_index", 0)
+            name = f"{repo_name}:{ref}:{action_path}:{workflow_name}:{job_id}:step_{step_index}:{action_name}"
         else:
-            action_node = ActionNode(action_name, ref, action_path, repo_name, params)
-            NodeFactory.NODE_CACHE[action_node.name] = action_node
-            return action_node
+            # Fallback to old naming for backwards compatibility
+            name = f"{repo_name}:{ref}:{action_path}:{action_name}"
+
+        # Always create new node since each usage should be unique
+        # (the cache now serves a different purpose - caching action definitions)
+        action_node = ActionNode(
+            action_name, ref, action_path, repo_name, params, usage_context
+        )
+        NodeFactory.NODE_CACHE[name] = action_node
+        return action_node

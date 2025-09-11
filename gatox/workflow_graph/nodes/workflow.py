@@ -14,9 +14,54 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from gatox.workflow_graph.nodes.node import Node
-from gatox.workflow_graph.nodes.job import JobNode
+import logging
+import re
+
 from gatox.models.workflow import Workflow
+from gatox.workflow_graph.nodes.job import JobNode
+from gatox.workflow_graph.nodes.node import Node
+
+logger = logging.getLogger(__name__)
+
+
+def _has_dispatch_toctou_risk(workflow_inputs):
+    """
+    Check if workflow dispatch inputs indicate potential TOCTOU vulnerability.
+
+    This utility function checks if there's a PR number input without a required SHA,
+    which could lead to Time-Of-Check to Time-Of-Use vulnerabilities.
+
+    Args:
+        workflow_inputs (dict): The workflow dispatch inputs to analyze
+
+    Returns:
+        bool: True if there's TOCTOU risk (PR number without required SHA), False otherwise
+    """
+    if not workflow_inputs:
+        return False
+
+    pr_num_found = False
+    sha_found = False
+
+    # Process inputs to determine if any contain a PR number.
+    # This is a heuristic to identify workflows that are taking a PR number
+    # or mutable reference.
+    for key, val in workflow_inputs.items():
+        if "sha" in key.lower():
+            if isinstance(val, dict):
+                # Suppress if sha is required
+                if "required" in val:
+                    if val["required"]:
+                        sha_found = True
+
+        elif re.search(
+            r"(?:^|[\b_])(pr|pull|pull_request|pr_number)(?:[\b_]|$)",
+            key,
+            re.IGNORECASE,
+        ):
+            pr_num_found = True
+
+    return pr_num_found and not sha_found
 
 
 class WorkflowNode(Node):
@@ -26,12 +71,13 @@ class WorkflowNode(Node):
         """Constructor for workflow wrapper."""
 
         # Create a unique ID for this workflow.
-        self.name = f"{repo_name}:{ref}:{workflow_path}"
+        super().__init__(f"{repo_name}:{ref}:{workflow_path}")
         # By default, a workflow node is "uninitialized" until it is processed
         # with the workflow YAML. We sometimes add unititialized nodes to the
         # graph if a workflow references another workflow that has not been
         # processed yet.
         self.uninitialized = True
+        self.non_existent = False  # True if workflow file doesn't exist
         self.__workflow_path = workflow_path
         self.__triggers = []
         self.__callers = []
@@ -100,6 +146,18 @@ class WorkflowNode(Node):
                         self.__excluded = True
                     else:
                         extracted_triggers.append(trigger)
+                elif trigger == "workflow_dispatch":
+                    if not trigger_conditions or "inputs" not in trigger_conditions:
+                        # If no inputs are present, then this workflow
+                        # cannot have a dispatch TOCTOU
+                        self.__excluded = True
+                    else:
+                        # Check if workflow has TOCTOU risk (PR number without required SHA)
+                        if not _has_dispatch_toctou_risk(
+                            trigger_conditions.get("inputs", {})
+                        ):
+                            self.__excluded = True
+                        extracted_triggers.append(trigger)
                 else:
                     extracted_triggers.append(trigger)
 
@@ -117,7 +175,7 @@ class WorkflowNode(Node):
             else:
                 return {}
         except TypeError:
-            print(workflow_data["on"])
+            logger.error(workflow_data["on"])
 
     def __process_envs(self, workflow_data: dict):
         if "env" in workflow_data:
@@ -147,7 +205,7 @@ class WorkflowNode(Node):
         if not self.__callers:
             return set()
         else:
-            return set([caller.get_workflow() for caller in self.__callers])
+            return {caller.get_workflow() for caller in self.__callers}
 
     def initialize(self, workflow: Workflow):
         """Initialize the Workflow node with the parsed workflow data."""
@@ -157,15 +215,26 @@ class WorkflowNode(Node):
         self.inputs = self.__process_inputs(workflow.parsed_yml)
         self.uninitialized = False
 
+    def mark_as_non_existent(self):
+        """Mark this workflow as non-existent (file doesn't exist in repository)."""
+        self.uninitialized = False
+        self.non_existent = True
+
+    def is_non_existent(self):
+        """Check if this workflow is marked as non-existent."""
+        return self.non_existent
+
     def get_triggers(self):
         """Retrieve the triggers associated with the Workflow node."""
         return self.__triggers
 
     def get_tags(self):
         """ """
-        tags = set([self.__class__.__name__])
+        tags = super().get_tags()
 
-        if self.uninitialized:
+        if self.non_existent:
+            tags.add("non_existent")
+        elif self.uninitialized:
             tags.add("uninitialized")
         else:
             tags.add("initialized")

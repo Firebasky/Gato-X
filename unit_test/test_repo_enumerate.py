@@ -1,15 +1,13 @@
+import json
 import os
 import pathlib
+from unittest.mock import AsyncMock
+
 import pytest
-import json
-import datetime
 
-from unittest.mock import MagicMock
-
-import gatox.enumerate.repository
-from gatox.models.repository import Repository
-from gatox.enumerate.repository import RepositoryEnum
 from gatox.cli.output import Output
+from gatox.enumerate.repository import RepositoryEnum
+from gatox.models.repository import Repository
 
 TEST_REPO_DATA = None
 TEST_WORKFLOW_YML = None
@@ -25,16 +23,16 @@ def load_test_files(request):
     test_repo_path = os.path.join(curr_path, "files/example_repo.json")
     test_wf_path = os.path.join(curr_path, "files/main.yaml")
 
-    with open(test_repo_path, "r") as repo_data:
+    with open(test_repo_path) as repo_data:
         TEST_REPO_DATA = json.load(repo_data)
 
-    with open(test_wf_path, "r") as wf_data:
+    with open(test_wf_path) as wf_data:
         TEST_WORKFLOW_YML = wf_data.read()
 
 
-def test_enumerate_repo():
+async def test_enumerate_repo():
     """Test constructor for enumerator."""
-    mock_api = MagicMock()
+    mock_api = AsyncMock()
 
     gh_enumeration_runner = RepositoryEnum(mock_api, False)
 
@@ -59,16 +57,16 @@ def test_enumerate_repo():
     test_repo = Repository(repo_data)
     test_repo.add_self_hosted_workflows(["build.yaml"])
 
-    gh_enumeration_runner.enumerate_repository(test_repo)
+    await gh_enumeration_runner.enumerate_repository(test_repo)
 
     assert test_repo.sh_runner_access is True
     assert len(test_repo.accessible_runners) > 0
     assert test_repo.accessible_runners[0].runner_name == "much_unit_such_test"
 
 
-def test_enumerate_repo_admin():
+async def test_enumerate_repo_admin():
     """Test constructor for enumerator."""
-    mock_api = MagicMock()
+    mock_api = AsyncMock()
 
     gh_enumeration_runner = RepositoryEnum(mock_api, False)
 
@@ -93,14 +91,14 @@ def test_enumerate_repo_admin():
     repo_data["permissions"]["admin"] = True
     test_repo = Repository(repo_data)
 
-    gh_enumeration_runner.enumerate_repository(test_repo)
+    await gh_enumeration_runner.enumerate_repository(test_repo)
 
     assert test_repo.is_admin()
 
 
-def test_enumerate_repo_secrets():
+async def test_enumerate_repo_secrets():
     """Test constructor for enumerator."""
-    mock_api = MagicMock()
+    mock_api = AsyncMock()
 
     gh_enumeration_runner = RepositoryEnum(mock_api, False)
 
@@ -134,6 +132,6 @@ def test_enumerate_repo_secrets():
     repo_data = json.loads(json.dumps(TEST_REPO_DATA))
     test_repo = Repository(repo_data)
 
-    gh_enumeration_runner.enumerate_repository_secrets(test_repo)
+    await gh_enumeration_runner.enumerate_repository_secrets(test_repo)
 
     assert len(test_repo.secrets) > 0

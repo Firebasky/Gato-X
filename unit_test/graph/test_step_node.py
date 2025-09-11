@@ -1,4 +1,3 @@
-import pytest
 from gatox.workflow_graph.nodes.step import StepNode
 
 
@@ -13,6 +12,7 @@ def test_step_node_init_script():
         workflow_path=".github/workflows/test.yml",
         job_name="build",
         step_number=1,
+        line_number=42,
     )
 
     assert node.name == "test/repo:main:.github/workflows/test.yml:build:test step_1"
@@ -22,6 +22,8 @@ def test_step_node_init_script():
     assert not node.metadata
     assert not node.hard_gate
     assert not node.soft_gate
+    assert "line_number" in node.get_repr()
+    assert node.get_repr()["line_number"] == 42
 
 
 def test_step_node_init_action():
@@ -43,6 +45,7 @@ def test_step_node_init_action():
 
     assert node.type == "action"
     assert not node.is_checkout
+    assert node.uses == "actions/checkout@v2"
     assert node.params == {"ref": "${{ github.event.pull_request.head.ref }}"}
 
 
@@ -82,6 +85,9 @@ def test_step_node_get_tags():
     assert "injectable" not in tags
     assert "permission_blocker" not in tags
     assert "permission_check" not in tags
+
+    node.extra_tags.add("extra_tag")
+    assert "extra_tag" in node.get_tags()
 
 
 def test_step_node_get_attrs():

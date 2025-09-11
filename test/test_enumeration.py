@@ -1,17 +1,17 @@
-import os
-import pytest
-import pathlib
 import json
+import os
+import pathlib
 
-from .integration_utils import process_command
-from .integration_utils import load_creds
+import pytest
+
+from .integration_utils import load_creds, process_command
 
 
 def load_cases():
     """Load test cases from the test case JSON file."""
     curr_path = pathlib.Path(__file__).parent.resolve()
 
-    with open(os.path.join(curr_path, "test_cases.json"), "r") as f:
+    with open(os.path.join(curr_path, "test_cases.json")) as f:
         cases = json.load(f)
 
     creds = load_creds()
@@ -28,7 +28,6 @@ def load_cases():
 
 @pytest.mark.parametrize("test_details, test_creds", load_cases())
 def test_gato(test_details, test_creds, capsys):
-
     if not test_creds["PAT_value"]:
         pytest.fail("The PAT was not set!!")
 
@@ -37,7 +36,6 @@ def test_gato(test_details, test_creds, capsys):
     output, error = process_command(test_details["invocation"], capsys)
 
     for assertion in test_details["assertions"]:
-
         print(output)
 
         if assertion["type"] == "stdout":
@@ -49,7 +47,6 @@ def test_gato(test_details, test_creds, capsys):
         validation = test_details["extra_validation"]
 
         if validation["type"] == "file":
-
             with open(validation["filename"]) as file_check:
                 file_contents = file_check.read()
 

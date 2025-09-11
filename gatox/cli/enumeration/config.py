@@ -1,5 +1,5 @@
-from gatox.cli.output import Fore, Style, Output
-from gatox.util.arg_utils import StringType, ReadableFile, WriteableDir, WritablePath
+from gatox.cli.output import Fore, Output, Style
+from gatox.util.arg_utils import ReadableFile, StringType, WritablePath, WriteableDir
 
 
 def configure_parser_enumerate(parser):
@@ -33,6 +33,13 @@ def configure_parser_enumerate(parser):
         "enumerate for self-hosted runners.",
         metavar=f"{Fore.RED}PATH/TO/FILE.txt{Style.RESET_ALL}",
         type=ReadableFile(),
+    )
+
+    parser.add_argument(
+        "--commit",
+        help="Check a specific commit for Actions vulnerabilities. Requires --repository.",
+        metavar=f"{Fore.RED}SHA{Style.RESET_ALL}",
+        type=StringType(40, regex=r"[A-Fa-f0-9]{40}"),
     )
 
     parser.add_argument(

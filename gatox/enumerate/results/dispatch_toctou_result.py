@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from gatox.enumerate.results.confidence import Confidence
-from gatox.enumerate.results.complexity import Complexity
 from gatox.enumerate.results.analysis_result import AnalysisResult
+from gatox.enumerate.results.complexity import Complexity
+from gatox.enumerate.results.confidence import Confidence
 from gatox.enumerate.results.issue_type import IssueType
 
 
@@ -33,7 +33,6 @@ class DispatchTOCTOUResult(AnalysisResult):
         confidence_score: Confidence,
         attack_complexity_score: Complexity,
     ):
-
         repository_name = path[0].repo_name()
 
         super().__init__(
@@ -59,17 +58,24 @@ class DispatchTOCTOUResult(AnalysisResult):
             )
         )
 
-    def to_machine(self):
+    def filter_triggers(self, triggers):
+        """Filter triggers to remove non-relevant ones."""
+        RELEVANT_TRIGGERS = {
+            "workflow_dispatch",
+            "repository_dispatch",
+        }
+        return list(set(triggers) & RELEVANT_TRIGGERS)
 
+    def to_machine(self):
         result = {
             "repository_name": self.repo_name(),
             "issue_type": self.issue_type(),
-            "triggers": self.__attack_path[0].get_triggers(),
+            "triggers": self.filter_triggers(self.__attack_path[0].get_triggers()),
             "initial_workflow": self.__attack_path[0].get_workflow_name(),
             "confidence": self.confidence_score(),
             "attack_complexity": self.attack_complexity(),
             "explanation": self.attack_complexity().explain(),
-            "path": [node for node in self.collect_steps(self.__attack_path)],
+            "path": list(self.collect_steps(self.__attack_path)),
             "sink": (
                 self.__attack_path[-1].get_step_data()
                 if self.confidence_score() == Confidence.HIGH

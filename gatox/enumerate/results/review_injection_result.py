@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from gatox.enumerate.results.confidence import Confidence
-from gatox.enumerate.results.complexity import Complexity
 from gatox.enumerate.results.analysis_result import AnalysisResult
+from gatox.enumerate.results.complexity import Complexity
+from gatox.enumerate.results.confidence import Confidence
 from gatox.enumerate.results.issue_type import IssueType
 
 
@@ -33,12 +33,11 @@ class ReviewInjectionResult(AnalysisResult):
         confidence_score: Confidence,
         attack_complexity_score: Complexity,
     ):
-
         repository_name = path[0].repo_name()
 
         super().__init__(
             repository_name,
-            IssueType.PR_REVIEW_INJECTON,
+            IssueType.PR_REVIEW_INJECTION,
             confidence_score,
             attack_complexity_score,
         )
@@ -65,7 +64,6 @@ class ReviewInjectionResult(AnalysisResult):
         return list(set(triggers) & RELEVANT_TRIGGERS)
 
     def to_machine(self):
-
         result = {
             "repository_name": self.repo_name(),
             "issue_type": self.issue_type(),
@@ -74,7 +72,7 @@ class ReviewInjectionResult(AnalysisResult):
             "confidence": self.confidence_score(),
             "attack_complexity": self.attack_complexity(),
             "explanation": self.attack_complexity().explain(),
-            "path": [node for node in self.collect_steps(self.__attack_path)],
+            "path": list(self.collect_steps(self.__attack_path)),
             "injectable_context": self.__attack_path[-1].contexts,
         }
 
